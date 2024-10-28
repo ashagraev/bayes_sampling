@@ -27,7 +27,7 @@ func ServeHTTPRequests(h *Handler, port *string) {
 }
 
 func main() {
-	port := flag.String("port", "80", "bing the HTTP server to this port")
+	port := flag.String("port", "8080", "bing the HTTP server to this port")
 	flag.Parse()
 
 	ctx := context.Background()
