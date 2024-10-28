@@ -361,6 +361,8 @@ plt.legend(loc="upper left")
 plt.show()
 ```
 
+![image](https://github.com/user-attachments/assets/ee5c938b-c34d-46b9-94ac-263e83b56fa1)
+
 As you can see, with the current numbers, the uncertainty is quite high. If we change the number of events, though, the
 situation will become different:
 
@@ -374,6 +376,8 @@ curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_1&views=20"
 curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_1&clicks=10"
 ```
 
+![image](https://github.com/user-attachments/assets/82a859c2-12a5-433e-978d-ce407821b809)
+
 ```
 test_key_1: clicks = 100, views = 200
 test_key_2: clicks = 200, views = 300
@@ -383,6 +387,8 @@ curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_2&clicks=200"
 curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_1&views=200"
 curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_1&clicks=100"
 ```
+
+![image](https://github.com/user-attachments/assets/c3993538-0e16-4428-b8d2-d037f450deb5)
 
 As you can see, as the number of views growth, the confidence also growth as the distributions become thinner. In
 real-time applications, the more conversions a certain variant displays, the more often it is presented to the users, so
