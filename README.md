@@ -258,10 +258,10 @@ aws ecs register-task-definition \
   ]'
 ```
 
-Also, please figure a better way to pass the ENV variables with the AWS credentials inside the container, which will be
+Also, please figure out a better way to pass the ENV variables with the AWS credentials inside the container, which will be
 better aligned with your infrastructure.
 
-Here, we're using minimalistic configuration with 0.5 vCPU and 1Gb RAM as the service does not require a ton of
+Here, we're using a minimalistic configuration with 0.5 vCPU and 1Gb RAM as the service does not require a ton of
 resources. Lastly, we create the Fargate service. The easiest way to go about it is to first retrieve the default
 subnets list:
 
