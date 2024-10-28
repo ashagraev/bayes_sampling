@@ -33,7 +33,7 @@ ENV variable `AWS_COUNTERS_TABLE` to be set to the name of the table that we uti
 simplest variant we can launch it in the following way:
 
 ```
-AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_COUNTERS_TABLE=bayesian_counters bayes_sampling --port 8080
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=... AWS_COUNTERS_TABLE=bayesian_counters bayes_sampling --port 8080
 ```
 
 Of course, you're free to set other port if necessary.
@@ -172,3 +172,218 @@ To select one key out of the list of the keys passed to the `/sample` endpoint, 
     - `alpha = clicks + 1`
     - `beta = views - clicks + 1`
 - The key with the highest sampled value wins.
+
+## Running in Docker on AWS
+
+**1. Release**
+
+```
+docker build --platform linux/amd64 \
+--build-arg TARGETOS=linux \
+--build-arg TARGETARCH=amd64 \
+-t ashagraev/bayes_optimization:linux-amd64-latest .
+docker push ashagraev/bayes_optimization:linux-amd64-latest
+
+docker build --platform linux/amd64 \
+--build-arg TARGETOS=linux \
+--build-arg TARGETARCH=amd64 \
+-t ashagraev/bayes_optimization:linux-amd64-v001 .
+docker push ashagraev/bayes_optimization:linux-amd64-v001
+```
+
+**2. Launching on a VM**
+
+```
+docker pull ashagraev/bayes_optimization:linux-amd64-v001
+
+docker run -d -p 8080:8080 \
+-e AWS_ACCESS_KEY_ID=... \
+-e AWS_SECRET_ACCESS_KEY=... \
+-e AWS_REGION=... \
+-e AWS_COUNTERS_TABLE=bayesian_counters \
+ashagraev/bayes_optimization:linux-amd64-v001
+```
+
+**3. Launching in Fargate**
+
+Assuming, you don't have a pre-existing Fargate cluster, we start with creating one:
+
+```
+aws ecs create-cluster --cluster-name fargate-test
+```
+
+Then we create a Fargate task definition that would utilize our Docker Hub repository. Please
+substitute `YOUR_AWS_ACCOUNT_ID` with your AWS account ID in the following command:
+
+```
+aws ecs register-task-definition \
+  --family bayes-optimization \
+  --network-mode awsvpc \
+  --requires-compatibilities FARGATE \
+  --cpu "512" \
+  --memory "1024" \
+  --execution-role-arn arn:aws:iam::YOUR_AWS_ACCOUNT_ID:role/ecsTaskExecutionRole \
+  --container-definitions '[
+    {
+      "name": "bayes-optimization",
+      "image": "ashagraev/bayes_optimization:linux-amd64-v001",
+      "cpu": 512,
+      "memory": 1024,
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "value": "..."
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "value": "..."
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "..."
+        },
+        {
+          "name": "AWS_COUNTERS_TABLE",
+          "value": "bayesian_counters"
+        }
+      ]
+    }
+  ]'
+```
+
+Also, please figure a better way to pass the ENV variables with the AWS credentials inside the container, which will be
+better aligned with your infrastructure.
+
+Here, we're using minimalistic configuration with 0.5 vCPU and 1Gb RAM as the service does not require a ton of
+resources. Lastly, we create the Fargate service. The easiest way to go about it is to first retrieve the default
+subnets list:
+
+```
+aws ec2 describe-subnets --filters Name=default-for-az,Values=true --query 'Subnets[*].SubnetId' --output text
+```
+
+Then use this list in the following `aws ecs create-service` command:
+
+```
+aws ecs create-service \
+--cluster fargate-test \
+--service-name bayes-optimization \
+--task-definition bayes-optimization \
+--launch-type FARGATE \
+--desired-count 1 \
+--network-configuration '{
+  "awsvpcConfiguration": {
+    "subnets": ["subnet-xxxxxxxx", "subnet-yyyyyyyy", "subnet-zzzzzzzz"],
+    "assignPublicIp": "ENABLED"
+  }
+}' \
+--platform-version "LATEST"
+```
+
+This will launch a simple Fargate service with a single instance. You can now attach a load balancer to it and play with
+the configuration as you wish: split the capacity between `FARGATE` and `FARGATE_SPOT`, change the number of instances,
+and so on.
+
+After the service is set up, you can send requests to it. Assuming there's no balancer yet, but the tasks have public
+addresses,
+one can simply query a single task to see if the service is working:
+
+```
+curl "http://aaa.bbb.ccc.ddd:8080/health"
+OK
+
+curl "http://aaa.bbb.ccc.ddd:8080/sample?key=test_key_1&key=test_key_2"
+{
+  "sampled_key": "test_key_1",
+  "sampled_score": 0.7529484868782941,
+  "sampled_values": {
+    "test_key_1": 0.7529484868782941,
+    "test_key_2": 0.687636170763479
+  }
+}
+```
+
+## Visualizing Distributions
+
+The program also allows for extracting the Beta distribution parameters for all the interesting keys. This way, the user
+can visualize them to get an intel on what are the conversion rates and confidences collected so far. Here's an example
+of a Python Notebook code that would collect the distribution parameters from newly created Fargate service and
+visualize them:
+
+```python
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure
+import numpy as np
+from scipy.stats import beta
+import requests
+
+keys = [
+    'test_key_1',
+    'test_key_2',
+]
+endpoint = 'http://aaa.bbb.ccc.ddd:8080/distribution_params?key=' + '&key='.join(keys)
+beta_params = requests.get(endpoint).json()
+
+figure(figsize=(20, 10), dpi=80)
+
+x = np.linspace(0,1,1000)
+
+cmap = plt.get_cmap('gnuplot')
+colors = [cmap(i) for i in np.linspace(0.5, 1.0, len(keys))]
+
+plt.rcParams['axes.facecolor'] = '#212121'
+plt.rcParams['figure.facecolor'] = '#212121'
+plt.rcParams['lines.linewidth'] = '2'
+plt.rcParams['axes.prop_cycle'] = plt.cycler('color',['#AAAAAA'])
+plt.rcParams['text.color'] = '#FFFFFF'
+plt.rcParams['grid.color'] = '#AAAAAA'
+plt.rcParams['xtick.color'] = '#AAAAAA'
+plt.rcParams['ytick.color'] = '#AAAAAA'
+plt.rcParams['grid.color'] = '#AAAAAA'
+plt.rcParams['xtick.color'] = '#AAAAAA'
+plt.rcParams['axes.spines.left'] = False
+plt.rcParams['axes.spines.top'] = False
+plt.rcParams['axes.spines.right'] = False
+plt.rcParams['axes.edgecolor'] = '#AAAAAA'
+
+for idx, key in enumerate(keys):
+    plt.plot(x, beta.pdf(x, beta_params[idx]['alpha'], beta_params[idx]['beta']), color=colors[idx], label=key)
+
+plt.yticks([])
+plt.legend(loc="upper left")
+plt.show()
+```
+
+As you can see, with the current numbers, the uncertainty is quite high. If we change the number of events, though, the
+situation will become different:
+
+```
+test_key_1: clicks = 10, views = 20
+test_key_2: clicks = 20, views = 30
+
+curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_2&views=30"
+curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_2&clicks=20"
+curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_1&views=20"
+curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_1&clicks=10"
+```
+
+```
+test_key_1: clicks = 100, views = 200
+test_key_2: clicks = 200, views = 300
+
+curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_2&views=300"
+curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_2&clicks=200"
+curl "http://aaa.bbb.ccc.ddd:8080/set_views?key=test_key_1&views=200"
+curl "http://aaa.bbb.ccc.ddd:8080/set_clicks?key=test_key_1&clicks=100"
+```
+
+As you can see, as the number of views growth, the confidence also growth as the distributions become thinner. In
+real-time applications, the more conversions a certain variant displays, the more often it is presented to the users, so
+you can expect the distributions to become thinner from left to right: higher conversion rate leads to more confidence.
