@@ -101,7 +101,7 @@ func (h *Handler) HandleSetClicks(w http.ResponseWriter, req *http.Request) {
 		h.ReportBadRequest(w, err)
 		return
 	}
-	updatedClicks, err := h.processor.SetViews(key, clicks)
+	updatedClicks, err := h.processor.SetClicks(key, clicks)
 	if err != nil {
 		h.ReportServerError(w, err)
 		return
